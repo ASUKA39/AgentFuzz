@@ -1,8 +1,8 @@
 import ast
-import os
 import subprocess
 import re
 import platform
+import sys
 
 def convert_bracket_to_at(expression):
     # Regular expressions match the form `text[...]`
@@ -161,8 +161,7 @@ else:
         # Save the generated Z3 script to a file
         with open(tmp_file_path, 'w') as script_file:
             script_file.write(z3_script)
-        PYTHON_EXECUTABLE = "python" if os.name == "nt" else "python3"
-        result = subprocess.run([PYTHON_EXECUTABLE,'-u', tmp_file_path], capture_output=True, text=True)
+        result = subprocess.run([sys.executable, '-u', tmp_file_path], capture_output=True, text=True)
         # Get stdout, stderr
         stdout = result.stdout
         stderr = result.stderr
@@ -170,6 +169,10 @@ else:
         # Printing Output
         print("Standard Output:")
         print(stdout)
+        if result.returncode != 0:
+            print("Standard Error:")
+            print(stderr)
+            return {}
         if "No solution satisfies the constraints" in stdout:
             return {}
         else:

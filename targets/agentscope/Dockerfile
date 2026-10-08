@@ -20,6 +20,9 @@ WORKDIR /opt/target
 COPY . /opt/target/
 COPY .target-build-config.json /opt/target-build-config.json
 
+# AgentFuzz's Z3 solver runs in the host-side AgentFuzz virtual environment.
+# This image installs only the Target runtime and its dependencies.
+
 # The build context supplies a small JSON file generated from the target
 # configuration.  A target-specific build script takes precedence when the
 # normal install/build commands cannot express the setup.
