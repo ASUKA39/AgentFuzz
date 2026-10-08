@@ -2,8 +2,9 @@
 """Run the configured AgentFuzz reproduction from preparation to cleanup.
 
 The only target-specific code is the Dockerfile, instrumentation script, and
-POC adapter named by ``config.json``.  The runner retains all generated
-artifacts under ``.workspace`` and always removes the temporary target
+POC adapter named by ``config.json``.  The runner verifies the host-side
+``z3-solver`` installation used by ``generate_z3.py``, retains all generated
+artifacts under ``.workspace``, and always removes the temporary target
 container.
 """
 
@@ -27,6 +28,24 @@ def run(command: list[str], *, env: dict[str, str] | None = None, check: bool = 
     if check and completed.returncode:
         raise subprocess.CalledProcessError(completed.returncode, command)
     return completed.returncode
+
+
+def check_solver(python_bin: Path) -> None:
+    """Ensure the fuzzer and generated Z3 scripts use the same environment."""
+    probe = subprocess.run(
+        [str(python_bin), "-c", "import z3; print(z3.get_version_string())"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode:
+        detail = (probe.stderr or probe.stdout).strip()
+        raise RuntimeError(
+            f"AgentFuzz Python environment cannot import z3-solver: {detail}. "
+            "Install requirements.txt in the same environment used to run this script."
+        )
+    print(f"[*] z3-solver: {probe.stdout.strip()}", flush=True)
 
 
 def main() -> int:
@@ -54,6 +73,7 @@ def main() -> int:
     python_bin = ROOT / ".workspace" / "agentfuzz-venv" / "bin" / "python"
     if not python_bin.is_file():
         python_bin = Path(sys.executable)
+    check_solver(python_bin)
     artifact = ROOT / ".workspace" / "fuzz-results" / safe_tag(config["target_name"])
     artifact.mkdir(parents=True, exist_ok=True)
     log_paths = {

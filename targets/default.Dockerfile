@@ -20,6 +20,9 @@ WORKDIR /opt/target
 COPY . /opt/target/
 COPY .target-build-config.json /opt/target-build-config.json
 
+# AgentFuzz's Z3 solver runs in the host-side AgentFuzz virtual environment.
+# This image installs only the Target runtime and its dependencies.
+
 RUN python - <<'PY'
 import json
 import subprocess
