@@ -83,7 +83,20 @@ os.environ["OPENAI_API_KEY"] = _Config.OPENAI_API_KEY
 # Semantic mutator
 openai_callback = OpenAICallbackHandler()
 
-llm = ChatOpenAI(model_name=_Config.__gpt_version__, temperature=_Config.__gpt__temperature__, callbacks=[openai_callback])
+llm = ChatOpenAI(
+    model_name=_Config.__gpt_version__,
+    temperature=_Config.__gpt__temperature__,
+    timeout=_Config.__model_timeout__,
+    max_retries=1,
+    model_kwargs={
+        "extra_body": {
+            "thinking": {
+                "type": "enabled" if _Config.__model_thinking__ else "disabled",
+            },
+        },
+    },
+    callbacks=[openai_callback],
+)
 
 system_message = SystemMessagePromptTemplate.from_template(
     MUTATE_SYSTEM_PROMPT
@@ -884,7 +897,8 @@ def prompt_mutate(final_population: Chromosome, container_name):
 
 def timmer():
     global Timer
-    time.sleep(300)  
+    delay = float(os.environ.get("AGENTFUZZ_FUZZ_TIMEOUT", "300"))
+    time.sleep(max(0.0, delay))
     Timer = True
 
 def fuzzing(target_call_chain, container_name, iteration, hook_file_name, call_stack_file_name,
@@ -916,6 +930,7 @@ def fuzzing(target_call_chain, container_name, iteration, hook_file_name, call_s
     # Initialization
     population, is_success = seed_generation(target_call_chain, container_name, hook_file_name, call_stack_file_name,
                                              injected_connect_with_auth, oracle_config_path)
+    mutator_result = ("", False)
     if is_success is not None:
         if is_success:
             new_prompt = get_poc_prompt(population.agent_input_prompt,population.final_match_oracle, population.match_oracle_rule)

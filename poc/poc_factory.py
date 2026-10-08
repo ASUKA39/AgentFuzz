@@ -15,6 +15,10 @@ import poc.dbgpt.poc
 import poc.agentscope.poc
 import poc.quivr.poc
 import poc.vanna.poc
+import importlib
+import json
+import os
+from pathlib import Path
 
 
 class MetaData:
@@ -30,7 +34,45 @@ class MetaData:
         self.connect_with_auth = connect_with_auth
 
 
+def _configured_metadata(app: str):
+    """Load a target adapter from the repository config when one is provided.
+
+    Existing built-in adapters remain available below.  A new target only
+    needs a JSON metadata entry and a ``module:function`` POC adapter; the
+    AgentFuzz core and this factory do not need another source-code edit.
+    """
+    config_path = Path(__file__).resolve().parents[1] / "config.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    entry = config.get("agentfuzz", {})
+    if not isinstance(entry, dict) or entry.get("application_name", app) != app:
+        return None
+    required = ("call_chain", "container_name", "oracle_json", "if_json", "hook_json", "dsc_json", "poc")
+    missing = [key for key in required if not entry.get(key)]
+    if missing:
+        raise ValueError(f"config.json agentfuzz entry is missing: {', '.join(missing)}")
+    module_name, separator, function_name = entry["poc"].partition(":")
+    if not separator or not module_name or not function_name:
+        raise ValueError("config.json agentfuzz.poc must use module:function syntax")
+    module = importlib.import_module(module_name)
+    connect_with_auth = getattr(module, function_name)
+    return MetaData(
+        entry["call_chain"],
+        entry["container_name"],
+        entry["oracle_json"],
+        entry["if_json"],
+        entry["hook_json"],
+        entry["dsc_json"],
+        connect_with_auth,
+    )
+
+
 def get_metadata(app: str):
+    configured = _configured_metadata(app)
+    if configured is not None:
+        return configured
     factory = {
         "agentzero": MetaData(
             "WebpageContentTool.execute -> get",
@@ -150,12 +192,12 @@ def get_metadata(app: str):
             poc.dbgpt.poc.connect_with_auth
         ),
         "agentscope": MetaData(
-            "_sys_execute -> exec",
-            "agentscope",
-            "output/agentscope/oracle.json",
-            "output/agentscope/agentscope-if.json",
-            "output/agentscope/enter_hook.json",
-            "output/agentscope/agentscope-dsc.json",
+            "start_workflow -> build_dag -> sanitize_node_data -> is_callable_expression -> eval",
+            "agentfuzz-agentscope",
+            ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output/oracle.json",
+            ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output/agentscope-if.json",
+            ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output/enter_hook.json",
+            ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output/agentscope-dsc.json",
             poc.agentscope.poc.connect_with_auth
         ),
         "quivr": MetaData(

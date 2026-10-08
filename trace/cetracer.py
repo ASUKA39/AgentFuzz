@@ -351,7 +351,11 @@ def do_hook():
 
 def update_global_variable():
     global is_startup
-    time.sleep(40)  
+    # Keep the original 40-second grace period by default.  Short-lived
+    # targets may set this through the instrumentation configuration because
+    # they otherwise exit before tracing becomes active.
+    delay = float(os.environ.get("AGENTFUZZ_TRACE_STARTUP_DELAY", "40"))
+    time.sleep(max(0.0, delay))
     is_startup = False
 
 
