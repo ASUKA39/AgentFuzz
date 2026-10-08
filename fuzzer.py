@@ -20,7 +20,7 @@ from langchain.prompts.chat import (
 import time
 from langchain.callbacks import OpenAICallbackHandler
 import copy
-from generate_conbyte import infer_variable_types, get_conbyte_result
+from generate_z3 import infer_variable_types, get_z3_result
 from trace.compare.compare import fuzzy_search, longest_common_substring
 from solve_dsc import solve_dsc
 import ast
@@ -242,8 +242,6 @@ def solve_and_get_new_prompt(population: Chromosome):
     dsc_rule = population.dsc_constraint
     is_dsc_solve = population.is_dsc_solve
     match_results = []
-    input_vars_key = []
-    input_vars = {}
     LAST_COMMON_SUBSTRING = {}
     LAST_CORRECT_PAYLOAD = {}
     LAST_PROMPT = input_prompt
@@ -251,8 +249,6 @@ def solve_and_get_new_prompt(population: Chromosome):
         return input_prompt, population.is_dsc_solve 
     if match_index > -1:
         expr = IF_RULE[match_index]["expr"]
-        input_vars_key = IF_RULE[match_index].get("input_vars",[])
-        function_code = IF_RULE[match_index].get("function_code","")
         if not contains_constant_string(expr):
             LOG.info("************************ MATCH RESULTS **********************")
             LOG.info("not found constant str in constraint expr: {}".format(expr))
@@ -268,18 +264,12 @@ def solve_and_get_new_prompt(population: Chromosome):
             result_dict = {key: value for key, value in matches}
             match_results.append(result_dict)
         final_result = match_results[-1]
-        for key in input_vars_key:
-            input_vars[key] = final_result[key]
     else:
         return input_prompt, population.is_dsc_solve 
     LOG.info("************************ MATCH RESULTS **********************")
     LOG.info(match_results)
     print("********************** expr ***************************")
     print(expr)
-    print("************************* input vars ************************")
-    print(input_vars)
-    print("*********************** input_vars_key *****************************")
-    print(input_vars_key)
     variable_types = infer_variable_types(expr)
     if variable_types is None:
         return input_prompt, population.is_dsc_solve 
@@ -299,7 +289,7 @@ def solve_and_get_new_prompt(population: Chromosome):
     for key in common_substrings:
         common_substrings[key].sort(key=len, reverse=True)
             # print(key, ": ", match_result[key])
-    corret_payload = get_conbyte_result(input_vars, function_code)
+    corret_payload = get_z3_result(expr)
     print(corret_payload)
     if not isinstance(corret_payload, dict):
         LAST_COMMON_SUBSTRING = common_substrings
