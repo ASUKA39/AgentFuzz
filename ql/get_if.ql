@@ -1,63 +1,66 @@
 /**
- * @id py-qs/bb-l7
- * @severity warning
- * @precision low
- * @description just a simple test ql file for if
+ * @id agentfuzz-typescript/if
  * @kind problem
+ * @name AgentFuzz TypeScript conditions
+ * @description Extract if conditions in the enclosing function.
+ * @severity warning
  */
+import javascript
+import DataFlow
 
- import call.call
- import util.util
- 
- class FunctionBlock extends BasicBlock {
-   Function f;
- 
-   FunctionBlock() { this.getScope() = f }
- 
-   Function getFunction() { result = f }
- }
- 
- class TestBlock extends FunctionBlock {
-   If stmt;
-   int n;
- 
-   TestBlock() {
-     this.getNode(n) = stmt.getTest().getAFlowNode() and
-     isIncludeLocation2(this.getScope().getLocation())
-   }
- 
-   ControlFlowNode getTest() { result = stmt.getTest().getAFlowNode() }
- }
- 
- predicate edges(BasicBlock bb, BasicBlock pred) {
-   exists(TestBlock tb | pred = tb | bb.getAPredecessor*() = tb)
-   or
-   icfg_edge(pred, bb)
- }
- 
- predicate icfg_edge(BasicBlock b1, BasicBlock b2) {
-   exists(Source source, FunctionObject caller, FunctionObject callee|
-     (b1.contains(source.getACallNode(caller, callee)))
-   |
-   b2.contains(source.getCallee())
-   )
- }
- 
- string locStr(Location loc) {
-   result =
-     loc.getFile().getAbsolutePath() + "#" + loc.getStartLine().toString() + ":" +
-       loc.getStartColumn().toString() + "#" + loc.getEndLine().toString() + ":" +
-       loc.getEndColumn().toString()
- }
- 
- from BasicBlock bb, Source source, int n
- where
-   isIncludeLocation2(bb.getScope().getLocation()) and
-   source.getCallee() = bb.getNode(n)
- select bb, "$@", source,
-   source.getPathStr() + "@@" + concat(TestBlock tb, Location loc |
-     edges*(bb, tb) and loc = tb.getTest().getLocation()
-   |
-     tb.getFunction().getQualifiedName() + "#" + locStr(loc), "->"
-   )
- 
+string anchor(Location loc) {
+  result = loc.getFile().getAbsolutePath() + "$$" +
+    loc.getStartLine().toString() + ":" + loc.getStartColumn().toString() + "$$" +
+    loc.getEndLine().toString() + ":" + loc.getEndColumn().toString()
+}
+
+predicate isSink(InvokeExpr call, string sink) {
+  sink = call.getCalleeName() and
+  sink in [
+    "eval", "Function", "runInNewContext", "runInThisContext",
+    "exec", "execFile", "execFileSync", "spawn", "spawnSync", "fork",
+    "fetch", "request", "get", "post", "query", "execute", "raw",
+    "runPythonAsync", "compile", "render", "renderString"
+  ]
+}
+
+predicate calls(Function caller, Function callee) {
+  exists(InvokeExpr invoke, DataFlow::InvokeNode node |
+    node.getInvokeExpr() = invoke and
+    node.getEnclosingFunction() = caller and
+    node.getACallee() = callee
+  )
+}
+
+predicate reaches(Function sourceFn, Function targetFn, int depth) {
+  depth = 0 and sourceFn = targetFn
+  or
+  depth > 0 and depth <= 10 and
+  exists(Function next | calls(sourceFn, next) and reaches(next, targetFn, depth - 1))
+}
+
+string callPath(Function start, Function target, int depth) {
+  depth = 1 and start = target and result = target.getName()
+  or
+  depth > 1 and depth <= 10 and
+  exists(Function next, string suffix |
+    calls(start, next) and
+    callPath(next, target, depth - 1) = suffix and
+    result = start.getName() + " -> " + suffix
+  )
+}
+
+from IfStmt stmt, Function ifCaller, InvokeExpr sinkCall, Function sinkCaller,
+  Function entry, string sink, int depth, int before, int after, string chain
+where
+  ifCaller = stmt.getContainer() and
+  sinkCaller = sinkCall.getEnclosingFunction() and
+  isSink(sinkCall, sink) and
+  before >= 0 and after >= 0 and depth = before + after + 1 and
+  depth <= 10 and reaches(entry, ifCaller, before) and
+  reaches(ifCaller, sinkCaller, after) and
+  callPath(entry, sinkCaller, depth) = chain
+select stmt,
+  chain + " -> " + sink + "@@" +
+  ifCaller.getName() + "#" + anchor(stmt.getCondition().getLocation()) + "@@" +
+  stmt.getCondition().toString()

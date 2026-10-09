@@ -2,9 +2,13 @@
 
 AgentFuzz is the implementation accompanying *Make Agent Defeat Agent: Automatic Detection of Taint-Style Vulnerabilities in LLM-based Agents*.
 
-The current `main` workflow targets Python applications. It builds a CodeQL database, converts the call-chain, condition, and string-constraint results into the original JSON rule contracts, instruments the target runtime, and runs the fuzzer against a configured input adapter.
-
-The current variable-solving path uses `generate_z3.py`. It receives the expression from `if.json`, generates a temporary Python/Z3 script, and executes that script with the same Python interpreter that runs AgentFuzz. The AgentFuzz environment therefore needs `z3-solver`; a separate Python environment for `py-conbyte` is not used.
+This branch is the TypeScript/JavaScript port of AgentFuzz. It builds a CodeQL
+JavaScript database, converts call-chain, condition, and string-constraint
+results into the original JSON rule contracts, instruments the target runtime,
+and runs the existing fuzzer against a configured input adapter. The high-level
+fuzzing flow and rule contracts remain those of AgentFuzz; language-specific
+parts are replaced with CodeQL JavaScript models, a TypeScript Compiler API
+instrumenter, Node.js async tracing, and a TypeScript/Z3 expression bridge.
 
 ## Reproduce a target
 
@@ -14,10 +18,11 @@ The complete configuration-driven procedure is documented in [REPRODUCTION_GUIDE
 python3 -m venv .workspace/agentfuzz-venv
 .workspace/agentfuzz-venv/bin/pip install -r requirements.txt
 .workspace/agentfuzz-venv/bin/python -c 'import z3; print(z3.get_version_string())'
+npm ci --ignore-scripts
 python3 scripts/reproduce.py --config config.json --duration 900 --iterations 100
 ```
 
-`config.json` supplies the pinned Target repository and commit, model endpoint, CodeQL executable and packs, Target dependency/build/run commands, instrumentation script, rule output directory, call chain, and POC adapter. `scripts/reproduce.py` performs static analysis, builds the Target image, runs the baseline command, starts the long-lived Target container, checks the POC adapter, runs AgentFuzz, collects logs, and removes the temporary container.
+`config.json` supplies the pinned Target repository and commit, model endpoint, CodeQL executable and packs, Target dependency/build/run commands, instrumentation script, rule output directory, call chain, and POC adapter. `scripts/reproduce.py` performs static analysis, builds the Target image, runs the baseline command, starts the long-lived Target container, waits for the configured health check, checks the POC adapter, runs AgentFuzz, collects logs, and removes the temporary container.
 
 Generated source copies, CodeQL databases, SARIF files, rule JSON, logs, and manifests remain under `.workspace`. The Target Docker image contains the Target runtime and its dependencies; the AgentFuzz model client and Z3 solver run on the host-side AgentFuzz virtual environment.
 

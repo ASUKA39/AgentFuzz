@@ -1,8 +1,8 @@
 {
-  "target_name": "agentscope_CVE-2024-48050_v0.0.4",
-  "repo_url": "https://github.com/agentscope-ai/agentscope",
-  "ref": "v0.0.4",
-  "expected_commit": "1c993f9ebf2a707cdf0a3b989f064111a7164acf",
+  "target_name": "flowise_CVE-2026-41265_v3.0.5",
+  "repo_url": "https://github.com/FlowiseAI/Flowise",
+  "ref": "flowise@3.0.5",
+  "expected_commit": "ba6a602cbe87d9f55c9ee6aebb6407ec2f2066b5",
   "model": {
     "base_url": "https://api.deepseek.com",
     "name": "deepseek-flash",
@@ -11,51 +11,47 @@
     "thinking": false,
     "timeout": 120
   },
-  "agentfuzz": {
-    "application_name": "agentscope",
-    "call_chain": "start_workflow -> build_dag -> sanitize_node_data -> is_callable_expression -> eval",
-    "container_name": "agentfuzz-agentscope",
-    "oracle_json": ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output/oracle.json",
-    "if_json": ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output/if.json",
-    "hook_json": ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output/enter_hook.json",
-    "dsc_json": ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output/dsc.json",
-    "poc": "poc.agentscope.poc:connect_with_auth",
-    "poc_test_payload": "baseline"
-  },
   "analysis": {
-    "codeql": "/tmp/codeql-2.19.2/codeql/codeql",
+    "codeql": "/home/asuka/workspace/codeql/codeql-cli/codeql",
     "pack_cache": "~/.codeql/packages",
     "download_packs": true,
-    "packs": [
-      "codeql/python-all@2.1.0",
-      "codeql/dataflow@1.1.3",
-      "codeql/mad@1.0.9",
-      "codeql/regex@1.0.9",
-      "codeql/ssa@1.0.9",
-      "codeql/suite-helpers@1.0.9",
-      "codeql/threat-models@1.0.9",
-      "codeql/tutorial@1.0.9",
-      "codeql/typetracking@1.0.9",
-      "codeql/util@1.0.9",
-      "codeql/xml@1.0.9",
-      "codeql/yaml@1.0.9"
-    ],
-    "language": "python",
-    "database": ".workspace/codeql/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2",
-    "output": ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2"
+    "packs": ["codeql/javascript-all@2.10.0"],
+    "language": "javascript",
+    "database": ".workspace/codeql/flowise_CVE-2026-41265_v3.0.5",
+    "output": ".workspace/static-analysis/flowise_CVE-2026-41265_v3.0.5",
+    "queries": [
+      {"file": "ql/get_if.ql", "sarif": "if.sarif", "converter": "typescript-if", "output": "if.json"},
+      {"file": "ql/get_callchain_and_location.ql", "sarif": "location.sarif", "converter": "typescript-callchain", "enter_hook": "enter_hook.json", "oracle": "oracle.json"},
+      {"file": "ql/get_dataflow_str_constraint.ql", "sarif": "dsc.sarif", "converter": "typescript-dsc", "output": "dsc.json"}
+    ]
+  },
+  "agentfuzz": {
+    "application_name": "flowise",
+    "call_chain": "run -> runPythonAsync",
+    "container_name": "agentfuzz-flowise",
+    "oracle_json": ".workspace/static-analysis/flowise_CVE-2026-41265_v3.0.5/output/oracle.json",
+    "if_json": ".workspace/static-analysis/flowise_CVE-2026-41265_v3.0.5/output/if.json",
+    "hook_json": ".workspace/static-analysis/flowise_CVE-2026-41265_v3.0.5/output/enter_hook.json",
+    "dsc_json": ".workspace/static-analysis/flowise_CVE-2026-41265_v3.0.5/output/dsc.json",
+    "poc": "poc.flowise:connect_with_auth",
+    "poc_test_payload": "Tell me the number of records in the Airtable table."
   },
   "target": {
-    "python_version": "3.10",
-    "install_command": "python -m pip install --upgrade pip && python -m pip install -e '.[full]' 'huggingface_hub<1.0' 'fastapi==0.110.0' 'starlette==0.36.3'",
-    "run_command": "cd /workspace && as_workflow /workspace/rce.json",
-    "serve_command": "cd /workspace && GRADIO_SERVER_NAME=0.0.0.0 GRADIO_SERVER_PORT=7860 exec as_studio /workspace/rce.json",
-    "serve_port": 7860,
-    "workspace": ".workspace/agentscope-workflow",
-    "container_name": "agentfuzz-agentscope",
+    "node_version": "20",
+    "package_manager": "pnpm@9",
+    "install_command": "corepack enable && corepack prepare pnpm@9.15.5 --activate && pnpm install --frozen-lockfile",
+    "build_command": "pnpm exec turbo run build --continue || test -f packages/server/dist/index.js",
+    "run_command": "test -f packages/server/dist/index.js && node --version",
+    "serve_command": "PORT=3000 pnpm start",
+    "serve_port": 3000,
+    "healthcheck_url": "http://127.0.0.1:3000/api/v1/ping",
+    "workspace": ".workspace/flowise-runtime",
+    "container_name": "agentfuzz-flowise",
+    "dockerfile": "targets/flowise.Dockerfile",
     "instrumentation": {
-      "script": "targets/agentscope/instrument.sh",
-      "rules_dir": ".workspace/static-analysis/agentscope_CVE-2024-48050_v0.0.4-codeql-2.19.2/output",
-      "startup_delay": 0
+      "script": "targets/flowise/instrument.sh",
+      "rules_dir": ".workspace/static-analysis/flowise_CVE-2026-41265_v3.0.5/output",
+      "startup_delay": 10
     }
   }
 }

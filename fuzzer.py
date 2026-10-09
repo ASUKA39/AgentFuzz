@@ -20,7 +20,7 @@ from langchain.prompts.chat import (
 import time
 from langchain.callbacks import OpenAICallbackHandler
 import copy
-from generate_z3 import infer_variable_types, get_z3_result
+from ts_solver_bridge import infer_variable_types, get_z3_result
 from trace.compare.compare import fuzzy_search, longest_common_substring
 from solve_dsc import solve_dsc
 import ast
@@ -213,15 +213,10 @@ def mutate_output_parser(output_message):
 
 
 def contains_constant_string(expression):
-    try:
-        tree = ast.parse(expression, mode='eval')
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                return True
-        return False
-    except Exception:
-        return False
+    # TypeScript expressions are parsed by the compiler API in the solver;
+    # this predicate only decides whether a useful literal exists before the
+    # existing mutation flow asks the solver for a model.
+    return bool(re.search(r"(?:'[^']*'|\"[^\"]*\"|`[^`]*`)", str(expression)))
 
 def clean_text(s:str):
     s = s.strip()
@@ -895,6 +890,9 @@ def fuzzing(target_call_chain, container_name, iteration, hook_file_name, call_s
                      injected_connect_with_auth, oracle_config_path, if_file_name, if_rule_path, oracle_file_path,dsc_config_path):
     global Timer
     thread = threading.Thread(target=timmer)
+    # The timer only guards the current fuzzing process. It must not keep a
+    # completed one-shot run alive after the main loop has returned.
+    thread.daemon = True
     thread.start()
     global connect_with_auth
     connect_with_auth = injected_connect_with_auth

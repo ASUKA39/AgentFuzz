@@ -2,10 +2,10 @@
 """Run the configured AgentFuzz reproduction from preparation to cleanup.
 
 The only target-specific code is the Dockerfile, instrumentation script, and
-POC adapter named by ``config.json``.  The runner verifies the host-side
-``z3-solver`` installation used by ``generate_z3.py``, retains all generated
-artifacts under ``.workspace``, and always removes the temporary target
-container.
+POC adapter named by ``config.json``. The runner verifies the host-side
+``z3-solver`` installation used by the TypeScript expression bridge, retains
+all generated artifacts under ``.workspace``, and always removes the temporary
+target container.
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from build_target_image import ROOT, safe_tag
@@ -42,10 +44,32 @@ def check_solver(python_bin: Path) -> None:
     if probe.returncode:
         detail = (probe.stderr or probe.stdout).strip()
         raise RuntimeError(
-            f"AgentFuzz Python environment cannot import z3-solver: {detail}. "
+            f"AgentFuzz environment cannot import z3-solver: {detail}. "
             "Install requirements.txt in the same environment used to run this script."
         )
     print(f"[*] z3-solver: {probe.stdout.strip()}", flush=True)
+
+
+def wait_healthcheck(target: dict) -> None:
+    url = target.get("healthcheck_url")
+    if not url:
+        delay = target.get("instrumentation", {}).get("startup_delay", 0)
+        if delay:
+            print(f"[*] waiting {delay}s for target service", flush=True)
+            time.sleep(float(delay))
+        return
+    timeout = float(target.get("healthcheck_timeout", 120))
+    deadline = time.monotonic() + timeout
+    print(f"[*] waiting for target health check: {url}", flush=True)
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                if 200 <= response.status < 400:
+                    return
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(1)
+    raise RuntimeError(f"target health check did not become ready within {timeout:g}s: {url}")
 
 
 def main() -> int:
@@ -108,11 +132,24 @@ def main() -> int:
             if completed.returncode:
                 raise subprocess.CalledProcessError(completed.returncode, ["run_target.py"])
 
-        run([
+        serve_command = target.get("serve_command") or target.get("run_command")
+        if not serve_command:
+            raise ValueError("config.target.serve_command or run_command is required")
+        docker_run = [
             "docker", "run", "-d", "--name", container, "--platform", "linux/amd64",
-            "-v", f"{workspace}:/workspace", image, "tail", "-f", "/dev/null",
-        ])
+            "-v", f"{workspace}:/workspace",
+        ]
+        port = target.get("serve_port")
+        if port:
+            if not isinstance(port, int) or not 1 <= port <= 65535:
+                raise ValueError("config.target.serve_port must be a valid TCP port")
+            docker_run.extend(["-p", f"{port}:{port}"])
+        for key, value in (target.get("environment") or {}).items():
+            docker_run.extend(["-e", f"{key}={value}"])
+        docker_run.extend([image, "bash", "-lc", str(serve_command)])
+        run(docker_run)
         container_started = True
+        wait_healthcheck(target)
         payload = agent.get("poc_test_payload")
         poc_spec = agent.get("poc", "")
         module_name, separator, function_name = poc_spec.partition(":")

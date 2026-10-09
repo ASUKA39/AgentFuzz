@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create AgentFuzz's CodeQL inputs from a configured Python target."""
+"""Create AgentFuzz's CodeQL inputs from a configured TypeScript target."""
 
 from __future__ import annotations
 
@@ -15,20 +15,20 @@ DEFAULT_QUERIES = [
     {
         "file": "ql/get_if.ql",
         "sarif": "if.sarif",
-        "converter": "if",
+        "converter": "typescript-if",
         "output": "if.json",
     },
     {
         "file": "ql/get_callchain_and_location.ql",
         "sarif": "location.sarif",
-        "converter": "hook",
+        "converter": "typescript-callchain",
         "enter_hook": "enter_hook.json",
         "oracle": "oracle.json",
     },
     {
         "file": "ql/get_dataflow_str_constraint.ql",
         "sarif": "dsc.sarif",
-        "converter": "dsc",
+        "converter": "typescript-dsc",
         "output": "dsc.json",
     },
 ]
@@ -52,7 +52,9 @@ def main() -> None:
     pack_cache = analysis.get("pack_cache")
     if pack_cache:
         pack_cache = str(Path(str(pack_cache)).expanduser())
-    language = analysis.get("language", "python")
+    language = analysis.get("language", "javascript")
+    if language not in {"javascript", "typescript"}:
+        raise ValueError("AgentFuzz TypeScript port requires analysis.language=javascript")
     queries = analysis.get("queries", DEFAULT_QUERIES)
     if not isinstance(queries, list) or not queries:
         raise ValueError("config.analysis.queries must be a non-empty list when overridden")
@@ -89,16 +91,17 @@ def main() -> None:
         run(analyze)
 
         converter = query.get("converter")
-        if converter == "hook":
+        if converter == "typescript-callchain":
             run([
-                "python3", "generate_hook.py", "--filename", str(sarif),
-                "--enter_hook_path", str(json_dir / query["enter_hook"]),
-                "--oracle_path", str(json_dir / query["oracle"]),
+                "node", str(ROOT / "ts" / "convert-sarif.mjs"), "--kind", "callchain",
+                "--input", str(sarif), "--sourceRoot", str(source), "--enter", str(json_dir / query["enter_hook"]),
+                "--oracle", str(json_dir / query["oracle"]),
             ])
-        elif converter in {"if", "dsc"}:
+        elif converter in {"typescript-if", "typescript-dsc"}:
+            kind = converter.removeprefix("typescript-")
             run([
-                "python3", f"generate_{converter}.py", "--filename", str(sarif),
-                "--output", str(json_dir / query["output"]),
+                "node", str(ROOT / "ts" / "convert-sarif.mjs"), "--kind", kind,
+                "--input", str(sarif), "--sourceRoot", str(source), "--output", str(json_dir / query["output"]),
             ])
         elif converter:
             raise ValueError(f"unsupported converter: {converter}")

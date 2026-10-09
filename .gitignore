@@ -209,3 +209,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Node dependencies generated for the TypeScript solver/runtime adapters
+node_modules/

@@ -101,14 +101,21 @@ def create_context(source: Path, context: Path, target_config: dict) -> None:
         instrumentation_root = context / '.agentfuzz'
         (instrumentation_root / 'rules').mkdir(parents=True)
         shutil.copy2(script_path, instrumentation_root / 'instrument.sh')
-        trace_path = ROOT / 'trace' / 'cetracer.py'
+        trace_path = ROOT / 'trace' / 'runtime.mjs'
+        trace_name = 'runtime.mjs'
+        instrument_path = ROOT / 'ts' / 'instrument.mjs'
         if not trace_path.is_file():
             raise FileNotFoundError(f'AgentFuzz tracer not found: {trace_path}')
-        shutil.copy2(trace_path, instrumentation_root / 'cetracer.py')
+        shutil.copy2(trace_path, instrumentation_root / trace_name)
+        if instrument_path:
+            if not instrument_path.is_file():
+                raise FileNotFoundError(f'AgentFuzz instrumenter not found: {instrument_path}')
+            shutil.copy2(instrument_path, instrumentation_root / 'instrument.mjs')
         for rule_file in rules_path.glob('*.json'):
             shutil.copy2(rule_file, instrumentation_root / 'rules' / rule_file.name)
         instrumentation_config = {
             'startup_delay': instrumentation.get('startup_delay', 40),
+            'language': 'javascript',
         }
         (instrumentation_root / 'instrumentation.json').write_text(
             json.dumps(instrumentation_config, indent=2) + '\n',
@@ -138,12 +145,15 @@ def main() -> None:
         raise ValueError('config.target must be an object')
     source = ensure_source(config, ROOT / '.workspace' / 'target-source')
     context = ROOT / '.workspace' / 'target-build' / config['target_name']
+    language = config.get('analysis', {}).get('language', 'javascript')
+    if language not in {'javascript', 'typescript'}:
+        raise ValueError('AgentFuzz TypeScript port requires analysis.language=javascript')
     create_context(source, context, target_config)
 
     tag = args.tag or f"agentfuzz-target:{safe_tag(config['target_name'])}"
     command = [
         'docker', 'build', '--platform', 'linux/amd64',
-        '--build-arg', f"PYTHON_VERSION={target_config.get('python_version', '3.10')}",
+        '--build-arg', f"NODE_VERSION={target_config.get('node_version', '20')}",
         '-t', tag, '-f', str(context / 'Dockerfile'), str(context),
     ]
     run(command)
