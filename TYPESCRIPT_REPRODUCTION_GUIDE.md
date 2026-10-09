@@ -247,6 +247,27 @@ manifest.json
 
 完整时长测试还应核对 `manifest.json` 的 `fuzz_elapsed_seconds` 不小于所要求的 `--duration`，以及 `fuzz_sessions` 大于等于 1。每个会话都是一次完整的 AgentFuzz 初始化、种子请求、变异和 Oracle 检查；会话因原有成功条件提前结束时，runner 会继续启动下一会话。
 
+### 查看成功 Prompt
+
+AgentFuzz 将每次运行最终保留下来的输入打印在 `FINAL PROMPT` 标记之间，并在后面的 `exploration successful` 标记处打印 `True` 或 `False`。`True` 表示该 Prompt 经过 AgentFuzz 的 Oracle 匹配并重新执行验证，可以作为待人工复核的漏洞 PoC 候选；它不表示漏洞已经被人工确认。`False` 或空的 Prompt 表示本次运行没有得到成功的 PoC 候选。
+
+使用一键脚本时，在以下文件中查看这些内容：
+
+```text
+.workspace/fuzz-results/<target_name>/agentfuzz.log
+```
+
+每个 AgentFuzz 会话最多输出一个最终 Prompt。若一键脚本因单次会话提前结束而启动多个会话，`agentfuzz.log` 会按会话顺序包含多个 `FINAL PROMPT`/`exploration successful` 段落；逐段读取，不要只看文件末尾。手工运行 `main.py` 时，同样的内容直接显示在终端。中间尝试过但未成为最终结果的候选 Prompt 不会作为独立 PoC 文件保存。
+
+可以用以下命令定位结果：
+
+```bash
+rg -n -A2 -B1 'FINAL PROMPT|exploration successful' \
+  .workspace/fuzz-results/<target_name>/agentfuzz.log
+```
+
+确认某段为 `True` 后，还必须结合该段对应的 `runtime-logs/oracle.log`、调用链日志和 Target 实际行为进行人工复核；不能仅凭 `True` 或 Prompt 文本下漏洞结论。
+
 一键脚本会删除 Target 容器。手工运行时执行：
 
 ```bash
