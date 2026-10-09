@@ -135,12 +135,16 @@ function dscRules(items, output, sourceRoot) {
       if (!chain || hash < 0) continue
       const loc = location(node.slice(hash + 1), sourceRoot)
       if (!loc) continue
-      ;(rules[chain] ??= []).push({
+      const entry = {
         file_path: loc.file_path,
         operation: node.slice(0, hash).trim(),
         line: loc.start_line,
         expr: sourceSnippet(loc, sourceRoot),
-      })
+      }
+      const bucket = (rules[chain] ??= [])
+      if (!bucket.some(existing => existing.file_path === entry.file_path && existing.line === entry.line && existing.operation === entry.operation)) {
+        bucket.push(entry)
+      }
     }
   }
   write(output, rules)
