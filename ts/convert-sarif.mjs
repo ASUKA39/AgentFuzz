@@ -116,6 +116,13 @@ function ifRules(items, output, sourceRoot) {
       })
     }
   }
+  for (const [chain, entries] of Object.entries(rules)) {
+    const order = new Map(chain.split(' -> ').map((name, index) => [name, index]))
+    entries.sort((left, right) =>
+      (order.get(left.func_name) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.func_name) ?? Number.MAX_SAFE_INTEGER) ||
+      left.start_line - right.start_line
+    )
+  }
   write(output, rules)
 }
 
