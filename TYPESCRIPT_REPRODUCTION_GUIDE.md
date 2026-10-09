@@ -35,17 +35,29 @@
       "script": "targets/<目标>/instrument.sh",
       "rules_dir": ".workspace/static-analysis/<名称>/output",
       "startup_delay": 10
-    }
+    },
+    "model": {"base_url": "<URL>", "name": "<model>", "api_key": "<key>"},
+    "model_environment": {"TARGET_MODEL_URL": "base_url", "TARGET_MODEL_NAME": "name", "TARGET_MODEL_KEY": "api_key"},
+    "patch_files": ["targets/<目标>/patches/<file>"],
+    "patch_script": "targets/<目标>/patches/patch.sh",
+    "mock_services": [{
+      "name": "<service>", "files": ["targets/<目标>/mocks/<file>"],
+      "command": "<command>", "environment": {}, "port": 4567,
+      "healthcheck_url": "http://127.0.0.1:4567/health"
+    }],
+    "prepare_script": "targets/<目标>/prepare.sh",
+    "prepare_files": ["targets/<目标>/<template-or-script>"],
+    "prepare_env_file": "target.env"
   }
 }
 ```
 
 `expected_commit` 必须对应漏洞版本，不能使用浮动分支。`analysis.language` 对 TypeScript 目标使用 `javascript`；CodeQL 的 JavaScript 数据库同时覆盖 JavaScript 和 TypeScript。`install_command` 和 `build_command` 在 Docker 构建阶段执行；如果目标的构建存在已知的基线类型诊断，命令必须明确采用目标项目可接受的构建方式，并在构建后用 `run_command` 或服务健康检查确认运行文件确实生成。不能通过修改目标源码消除这些诊断。
 
-模型配置位于配置文件的 `model` 对象中，宿主机上的 AgentFuzz 读取它发送 OpenAI-compatible 请求：
+模型配置分为两个独立对象：`agentfuzz_model` 供宿主机上的 AgentFuzz 使用，`target.model` 供 Target 的自动初始化步骤使用。两者当前可以填写相同的 DeepSeek 配置，但注入路径彼此独立：
 
 ```json
-"model": {
+"agentfuzz_model": {
   "base_url": "https://api.deepseek.com",
   "name": "deepseek-flash",
   "api_key": "<API key>",
@@ -55,7 +67,7 @@
 }
 ```
 
-也可以使用环境变量 `AGENTFUZZ_MODEL_BASE_URL`、`AGENTFUZZ_MODEL_NAME`、`AGENTFUZZ_MODEL_API_KEY`、`AGENTFUZZ_MODEL_TEMPERATURE` 和 `AGENTFUZZ_MODEL_TIMEOUT` 覆盖配置。模型 key 只在宿主机使用，不传入 Target 容器。
+Target 的模型通过 `target.model_environment` 映射到容器环境变量；Target 专用 `prepare_script` 负责将这些值写入其 Chatflow 或运行时配置。宿主机 AgentFuzz 可使用环境变量 `AGENTFUZZ_MODEL_BASE_URL`、`AGENTFUZZ_MODEL_NAME`、`AGENTFUZZ_MODEL_API_KEY`、`AGENTFUZZ_MODEL_TEMPERATURE` 和 `AGENTFUZZ_MODEL_TIMEOUT` 覆盖 `agentfuzz_model`。具体环境变量和初始化方式由目标配置决定。
 
 ## 2. 宿主机环境
 
@@ -110,7 +122,7 @@ CodeQL CLI 必须能够加载 `ql/qlpack.yml` 和 `ql/codeql-pack.lock.yml`。�
 
 ## 4. 构建 TypeScript Target 镜像
 
-目标专用 `targets/<目标>/instrument.sh` 在构建阶段调用 `ts/instrument.mjs`。该 Compiler API 插桩器加入函数进入/退出、条件分支和静态 Sink Probe；`trace/runtime.mjs` 通过 `AsyncLocalStorage` 维护异步调用链，并输出 `/tmp/hook.log`、`/tmp/if.log`、`/tmp/callstack.log` 和 `/tmp/oracle.log`。
+目标专用 `targets/<目标>/instrument.sh` 在构建阶段调用 `ts/instrument.mjs`。该 Compiler API 插桩器加入函数进入/退出、条件分支和静态 Sink Probe；`trace/runtime.mjs` 通过 `AsyncLocalStorage` 维护异步调用链，并输出 `/tmp/hook.log`、`/tmp/if.log`、`/tmp/callstack.log` 和 `/tmp/oracle.log`。配置的 `patch_files` 或 `patch_script` 在依赖安装和构建前执行，失败即停止构建；配置的 `mock_services` 在 Target 容器启动时由通用 runner 启动并进行健康检查；配置的 `prepare_script` 在 Target 健康后执行，用于创建 Chatflow、写入模型配置或完成目标特有的初始化。通用 runner 不包含 Airtable、Flowise 或其它目标专属逻辑。
 
 构建镜像：
 
@@ -159,16 +171,24 @@ docker run -d --name agentfuzz-flowise -p 3000:3000 \
 curl --fail http://127.0.0.1:3000/api/v1/ping
 ```
 
+一键流程会在 Target 健康后启动配置中的 `mock_services` 并轮询其健康地址，再执行 `prepare_script`。prepare 脚本可以按目标需要创建本地账号、导入测试数据、创建 Chatflow 或写入模型配置；其输出环境文件由 `prepare_env_file` 指定并提供给 POC。Flowise 示例会自动创建测试账号和包含 Airtable Agent 的 Chatflow，Airtable mock 返回固定的 Airtable 风格记录，不需要外部 Airtable 账号、Base 或 Table。
+
 ## 6. POC 和 AgentFuzz
 
 POC 适配器必须实现 `connect_with_auth(payload: str)`：把字符串转换成 Target 的真实输入格式，提交请求并等待完成；请求失败必须抛出异常。适配器不能伪造日志或直接写入 AgentFuzz 的四个日志文件。
 
-Flowise 的 `poc/flowise.py` 通过 `POST /api/v1/prediction/<chatflow_id>` 提交问题。运行前必须准备一个与固定版本兼容的真实 Chatflow，该 Chatflow 至少包含 Airtable Agent、可用的 Airtable 凭证/Base/Table 配置和运行所需的模型配置。将其 ID 通过环境变量提供：
+Flowise 的 `poc/flowise.py` 通过 `POST /api/v1/prediction/<chatflow_id>` 提交问题。示例的 `prepare_script` 会自动创建与固定版本兼容的真实 Chatflow，并将其 ID 写入 `.workspace/flowise-runtime/target.env`；Chatflow 包含 Airtable Agent、Target 模型配置和 mock 的 Base/Table 标识。其它 Target 的初始化方式由其配置的 prepare 文件决定：
 
 ```bash
 export AGENTFUZZ_FLOWISE_URL=http://127.0.0.1:3000
 export AGENTFUZZ_FLOWISE_CHATFLOW_ID=<真实 Chatflow ID>
 export AGENTFUZZ_FLOWISE_TIMEOUT=120
+```
+
+手工运行时也可以直接读取自动 prepare 产生的文件：
+
+```bash
+set -a; . .workspace/flowise-runtime/target.env; set +a
 ```
 
 连通性检查：
@@ -199,14 +219,14 @@ AGENTFUZZ_TARGET_CONTAINER=agentfuzz-flowise \
   --oracle_result_file /tmp/oracle.log
 ```
 
-一键流程依次执行静态分析、构建镜像、基线运行、启动服务、POC 连通性检查和 AgentFuzz：
+一键流程依次执行静态分析、构建镜像、清理并准备 Target workspace、基线运行、启动服务、启动 mock、健康检查、执行 prepare、POC 连通性检查和 AgentFuzz：
 
 ```bash
 .workspace/agentfuzz-venv/bin/python scripts/reproduce.py \
   --config config.json --duration 900 --iterations 100
 ```
 
-`scripts/reproduce.py` 在成功、失败或中断时删除配置中的 Target 容器，但保留 `.workspace` 产物。`--skip-analysis` 和 `--skip-baseline` 仅用于已核对产物后的续跑。
+`scripts/reproduce.py` 在成功、失败或中断时删除配置中的 Target 容器和同容器 mock 进程，但保留 `.workspace` 产物并恢复挂载目录的当前用户所有权。AgentFuzz 原有的单次成功判定可能提前返回；当 `--duration` 大于单次会话时，runner 会在同一 Target 和 mock 上重新启动完整 AgentFuzz 会话，累计运行到指定时长。`--skip-analysis` 和 `--skip-baseline` 仅用于已核对产物后的续跑。
 
 ## 7. 结果检查和清理
 
@@ -224,6 +244,8 @@ manifest.json
 ```
 
 先确认四个规则文件是合法 JSON，再检查 `manifest.json` 的退出码和错误字段、服务健康检查、POC 输出及四个运行时日志。`exploration successful` 是 AgentFuzz 的路径探索判定，不单独证明漏洞成立；漏洞结论需要结合 Target 行为、Oracle 事件和人工审计。
+
+完整时长测试还应核对 `manifest.json` 的 `fuzz_elapsed_seconds` 不小于所要求的 `--duration`，以及 `fuzz_sessions` 大于等于 1。每个会话都是一次完整的 AgentFuzz 初始化、种子请求、变异和 Oracle 检查；会话因原有成功条件提前结束时，runner 会继续启动下一会话。
 
 一键脚本会删除 Target 容器。手工运行时执行：
 

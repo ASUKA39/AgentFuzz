@@ -13,12 +13,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     libffi-dev \
     libssl-dev \
+    patch \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/target
 COPY . /opt/target/
 COPY .target-build-config.json /opt/target-build-config.json
+COPY .agentfuzz-build-config.json /opt/agentfuzz-build-config.json
+
+# Apply only the patches selected by the target configuration.  A failed
+# patch is fatal; the generic image never guesses target-specific changes.
+RUN python - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+config = json.loads(Path('/opt/target-build-config.json').read_text())
+root = Path('/opt/target')
+for name in config.get('patch_files', []):
+    subprocess.run(['patch', '--batch', '--forward', '-p1', '-i', str(root / '.agentfuzz' / 'patches' / name)], cwd=root, check=True)
+if config.get('patch_script'):
+    subprocess.run(['bash', str(root / '.agentfuzz' / 'patches' / config['patch_script'])], cwd=root, check=True,
+                   env={**os.environ, 'AGENTFUZZ_TARGET_ROOT': str(root), 'AGENTFUZZ_PATCH_ROOT': str(root / '.agentfuzz' / 'patches')})
+PY
 
 # AgentFuzz's Z3 solver runs in the host-side AgentFuzz virtual environment.
 # This image installs only the Target runtime and its dependencies.
@@ -44,12 +63,14 @@ else:
 PY
 
 COPY .agentfuzz /opt/agentfuzz
-COPY .target-build-config.json /opt/target-build-config.json
 RUN if [ -f /opt/agentfuzz/instrument.sh ]; then \
       chmod +x /opt/agentfuzz/instrument.sh && \
       AGENTFUZZ_TARGET_ROOT=/opt/target \
       AGENTFUZZ_TRACE_ROOT=/opt/agentfuzz \
       bash /opt/agentfuzz/instrument.sh; \
     fi
+
+RUN if [ -f /opt/agentfuzz/prepare-target.sh ]; then chmod +x /opt/agentfuzz/prepare-target.sh; fi
+RUN if [ -f /opt/agentfuzz/start-target.sh ]; then chmod +x /opt/agentfuzz/start-target.sh; fi
 
 CMD ["bash"]

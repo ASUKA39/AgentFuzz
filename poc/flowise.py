@@ -21,4 +21,5 @@ def connect_with_auth(payload: str) -> None:
     with urllib.request.urlopen(request, timeout=float(os.environ.get("AGENTFUZZ_FLOWISE_TIMEOUT", "120"))) as response:
         if response.status >= 400:
             raise RuntimeError(f"Flowise returned HTTP {response.status}")
-        response.read()
+        body = response.read().decode("utf-8", errors="replace")
+        print(body, flush=True)

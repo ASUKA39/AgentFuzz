@@ -16,7 +16,8 @@ def _model_config():
     configured = {}
     config_path = Path(__file__).resolve().parents[1] / "config.json"
     try:
-        configured = json.loads(config_path.read_text(encoding="utf-8")).get("model", {})
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        configured = raw.get("agentfuzz_model", raw.get("model", {}))
     except (OSError, json.JSONDecodeError):
         pass
     return {

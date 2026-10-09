@@ -1,0 +1,30 @@
+diff --git a/packages/components/nodes/agents/AirtableAgent/AirtableAgent.ts b/packages/components/nodes/agents/AirtableAgent/AirtableAgent.ts
+--- a/packages/components/nodes/agents/AirtableAgent/AirtableAgent.ts
++++ b/packages/components/nodes/agents/AirtableAgent/AirtableAgent.ts
+@@ -239,7 +239,8 @@
+ }
+ 
+ const loadAll = async (baseId: string, tableId: string, accessToken: string): Promise<ICommonObject[]> => {
+     const params: ICommonObject = { pageSize: 100 }
++    const airtableBaseUrl = process.env.AGENTFUZZ_AIRTABLE_BASE_URL ?? 'https://api.airtable.com'
+     let data: AirtableLoaderResponse
+     let returnPages: AirtableLoaderPage[] = []
+ 
+@@ -246,7 +247,7 @@
+ 
+     do {
+-        data = await fetchAirtableData(`https://api.airtable.com/v0/${baseId}/${tableId}`, params, accessToken)
++        data = await fetchAirtableData(`${airtableBaseUrl}/v0/${baseId}/${tableId}`, params, accessToken)
+         returnPages.push.apply(returnPages, data.records)
+         params.offset = data.offset
+     } while (data.offset !== undefined)
+@@ -255,7 +256,8 @@
+ }
+ 
+ const loadLimit = async (limit: number, baseId: string, tableId: string, accessToken: string): Promise<ICommonObject[]> => {
+     const params = { maxRecords: limit }
+-    const data = await fetchAirtableData(`https://api.airtable.com/v0/${baseId}/${tableId}`, params, accessToken)
++    const airtableBaseUrl = process.env.AGENTFUZZ_AIRTABLE_BASE_URL ?? 'https://api.airtable.com'
++    const data = await fetchAirtableData(`${airtableBaseUrl}/v0/${baseId}/${tableId}`, params, accessToken)
+     if (data.records.length === 0) {
+         return []

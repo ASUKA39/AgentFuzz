@@ -83,6 +83,64 @@ def create_context(source: Path, context: Path, target_config: dict) -> None:
         script_name = script_path.name
         shutil.copy2(script_path, context / script_name)
 
+    # Optional target patches are applied by the generic Dockerfile before
+    # dependencies are installed.  The generic runner only knows paths; it
+    # never embeds target-specific patch logic.
+    patch_root = context / '.agentfuzz' / 'patches'
+    patch_root.mkdir(parents=True, exist_ok=True)
+    patch_names = []
+    for patch_file in target_config.get('patch_files', []) or []:
+        patch_path = (ROOT / patch_file).resolve()
+        if ROOT not in patch_path.parents or not patch_path.is_file():
+            raise FileNotFoundError(f'target patch file not found: {patch_path}')
+        destination = patch_root / patch_path.name
+        shutil.copy2(patch_path, destination)
+        patch_names.append(destination.name)
+    patch_script = target_config.get('patch_script')
+    patch_script_name = None
+    if patch_script:
+        patch_script_path = (ROOT / patch_script).resolve()
+        if ROOT not in patch_script_path.parents or not patch_script_path.is_file():
+            raise FileNotFoundError(f'target patch script not found: {patch_script_path}')
+        patch_script_name = patch_script_path.name
+        shutil.copy2(patch_script_path, patch_root / patch_script_name)
+
+    # Mock services and preparation are runtime concerns.  Their files are
+    # copied into the image, while commands and environment remain JSON so the
+    # same image/runner can be used for another target.
+    mock_root = context / '.agentfuzz' / 'mocks'
+    mock_root.mkdir(parents=True, exist_ok=True)
+    mocks = []
+    for service in target_config.get('mock_services', []) or []:
+        if not isinstance(service, dict) or not service.get('command'):
+            raise ValueError('each target.mock_services entry requires command')
+        files = []
+        for file_name in service.get('files', []) or []:
+            file_path = (ROOT / file_name).resolve()
+            if ROOT not in file_path.parents or not file_path.is_file():
+                raise FileNotFoundError(f'mock service file not found: {file_path}')
+            destination = mock_root / file_path.name
+            shutil.copy2(file_path, destination)
+            files.append(destination.name)
+        mocks.append({**service, 'files': files})
+
+    prepare_script = target_config.get('prepare_script')
+    prepare_script_name = None
+    if prepare_script:
+        prepare_path = (ROOT / prepare_script).resolve()
+        if ROOT not in prepare_path.parents or not prepare_path.is_file():
+            raise FileNotFoundError(f'target prepare script not found: {prepare_path}')
+        prepare_script_name = prepare_path.name
+        shutil.copy2(prepare_path, context / '.agentfuzz' / prepare_script_name)
+    prepare_files = []
+    for file_name in target_config.get('prepare_files', []) or []:
+        file_path = (ROOT / file_name).resolve()
+        if ROOT not in file_path.parents or not file_path.is_file():
+            raise FileNotFoundError(f'target prepare file not found: {file_path}')
+        destination = context / '.agentfuzz' / file_path.name
+        shutil.copy2(file_path, destination)
+        prepare_files.append(destination.name)
+
     instrumentation = target_config.get('instrumentation')
     instrumentation_config = None
     if instrumentation:
@@ -126,9 +184,59 @@ def create_context(source: Path, context: Path, target_config: dict) -> None:
         'install_command': target_config.get('install_command'),
         'build_command': target_config.get('build_command'),
         'build_script': script_name,
+        'patch_files': patch_names,
+        'patch_script': patch_script_name,
+        'mock_services': mocks,
+        'prepare_script': prepare_script_name,
+        'prepare_files': prepare_files,
         'instrumentation': instrumentation_config,
     }
+    runtime_root = context / '.agentfuzz'
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    (runtime_root / 'mock-runner.mjs').write_text("""#!/usr/bin/env node
+import fs from 'node:fs'
+import path from 'node:path'
+import { spawn } from 'node:child_process'
+
+const config = JSON.parse(fs.readFileSync('/opt/agentfuzz-build-config.json', 'utf8'))
+const workspace = process.env.AGENTFUZZ_WORKSPACE || '/workspace'
+const logDir = path.join(workspace, 'mock-logs')
+fs.mkdirSync(logDir, { recursive: true })
+const children = []
+for (const [index, service] of (config.mock_services || []).entries()) {
+  const env = { ...process.env, ...(service.environment || {}) }
+  const log = fs.openSync(path.join(logDir, `${service.name || `mock-${index}`}.log`), 'a')
+  const child = spawn('/bin/bash', ['-lc', service.command], { env, stdio: ['ignore', log, log] })
+  children.push(child)
+}
+fs.writeFileSync(path.join(workspace, 'mock-services.json'), JSON.stringify({ started: children.length, services: config.mock_services || [] }, null, 2) + '\\n')
+process.on('SIGTERM', () => { for (const child of children) child.kill('SIGTERM') })
+process.on('SIGINT', () => { for (const child of children) child.kill('SIGINT') })
+setTimeout(() => {}, 0x7fffffff)
+""", encoding='utf-8')
+    (runtime_root / 'start-target.sh').write_text("""#!/usr/bin/env bash
+set -euo pipefail
+export AGENTFUZZ_WORKSPACE="${AGENTFUZZ_WORKSPACE:-/workspace}"
+node /opt/agentfuzz/mock-runner.mjs &
+MOCK_RUNNER_PID=$!
+cleanup() { kill "${MOCK_RUNNER_PID}" 2>/dev/null || true; wait "${MOCK_RUNNER_PID}" 2>/dev/null || true; }
+trap cleanup EXIT TERM INT
+sleep "${AGENTFUZZ_MOCK_START_DELAY:-1}"
+exec /bin/bash -lc "$*"
+""", encoding='utf-8')
+    (runtime_root / 'prepare-target.sh').write_text("""#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${AGENTFUZZ_PREPARE_SCRIPT:-}" ]]; then
+  exec /bin/bash "/opt/agentfuzz/${AGENTFUZZ_PREPARE_SCRIPT}"
+fi
+exit 0
+""", encoding='utf-8')
+    for runtime_file in ('mock-runner.mjs', 'start-target.sh', 'prepare-target.sh'):
+        (runtime_root / runtime_file).chmod(0o755)
     (context / '.target-build-config.json').write_text(
+        json.dumps(generated, indent=2) + '\n', encoding='utf-8',
+    )
+    (context / '.agentfuzz-build-config.json').write_text(
         json.dumps(generated, indent=2) + '\n', encoding='utf-8',
     )
 

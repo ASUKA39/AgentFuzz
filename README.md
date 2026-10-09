@@ -22,9 +22,9 @@ npm ci --ignore-scripts
 python3 scripts/reproduce.py --config config.json --duration 900 --iterations 100
 ```
 
-`config.json` supplies the pinned Target repository and commit, model endpoint, CodeQL executable and packs, Target dependency/build/run commands, instrumentation script, rule output directory, call chain, and POC adapter. `scripts/reproduce.py` performs static analysis, builds the Target image, runs the baseline command, starts the long-lived Target container, waits for the configured health check, checks the POC adapter, runs AgentFuzz, collects logs, and removes the temporary container.
+`config.json` supplies the pinned Target repository and commit, independent AgentFuzz/Target model settings, CodeQL executable and packs, Target dependency/build/run commands, optional patch and mock services, an optional Target preparation script, instrumentation script, rule output directory, call chain, and POC adapter. `scripts/reproduce.py` performs static analysis, builds the Target image, resets the Target workspace, runs the baseline command, starts the long-lived Target container and configured mocks, waits for health checks, runs preparation, checks the POC adapter, runs AgentFuzz for the requested wall-clock duration, collects logs, and removes the temporary container.
 
-Generated source copies, CodeQL databases, SARIF files, rule JSON, logs, and manifests remain under `.workspace`. The Target Docker image contains the Target runtime and its dependencies; the AgentFuzz model client and Z3 solver run on the host-side AgentFuzz virtual environment.
+Generated source copies, CodeQL databases, SARIF files, rule JSON, logs, and manifests remain under `.workspace`. The Target Docker image contains the Target runtime and its dependencies; the AgentFuzz model client and Z3 solver run on the host-side AgentFuzz virtual environment, while the independently configured Target model is injected only at runtime/preparation.
 
 ## Manual stages
 

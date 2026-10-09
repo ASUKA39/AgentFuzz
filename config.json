@@ -3,7 +3,15 @@
   "repo_url": "https://github.com/FlowiseAI/Flowise",
   "ref": "flowise@3.0.5",
   "expected_commit": "ba6a602cbe87d9f55c9ee6aebb6407ec2f2066b5",
-  "model": {
+  "agentfuzz_model": {
+    "base_url": "https://api.deepseek.com",
+    "name": "deepseek-flash",
+    "api_key": "sk-281d0267e93b4955acf0847a0ebd73c0",
+    "temperature": 0,
+    "thinking": false,
+    "timeout": 120
+  },
+  "target_model": {
     "base_url": "https://api.deepseek.com",
     "name": "deepseek-flash",
     "api_key": "sk-281d0267e93b4955acf0847a0ebd73c0",
@@ -44,6 +52,40 @@
     "run_command": "test -f packages/server/dist/index.js && node --version",
     "serve_command": "PORT=3000 pnpm start",
     "serve_port": 3000,
+    "model": {
+      "base_url": "https://api.deepseek.com",
+      "name": "deepseek-flash",
+      "api_key": "sk-281d0267e93b4955acf0847a0ebd73c0"
+    },
+    "model_environment": {
+      "AGENTFUZZ_TARGET_MODEL_BASE_URL": "base_url",
+      "AGENTFUZZ_TARGET_MODEL_NAME": "name",
+      "AGENTFUZZ_TARGET_MODEL_API_KEY": "api_key"
+    },
+    "environment": {
+      "DATABASE_TYPE": "sqlite",
+      "DATABASE_PATH": "/workspace/flowise-db",
+      "AGENTFUZZ_AIRTABLE_BASE_URL": "http://127.0.0.1:4567",
+      "AGENTFUZZ_FLOWISE_URL": "http://127.0.0.1:3000",
+      "AGENTFUZZ_FLOWISE_TEST_EMAIL": "agentfuzz@example.invalid",
+      "AGENTFUZZ_FLOWISE_TEST_PASSWORD": "AgentFuzz-test-password-2026!"
+    },
+    "patch_script": "targets/flowise/patches/airtable-base-url.sh",
+    "mock_services": [
+      {
+        "name": "airtable",
+        "files": ["targets/flowise/mocks/airtable.mjs"],
+        "command": "node /opt/target/.agentfuzz/mocks/airtable.mjs",
+        "environment": {"PORT": "4567"},
+        "port": 4567,
+        "healthcheck_url": "http://127.0.0.1:4567/health"
+      }
+    ],
+    "prepare_script": "targets/flowise/prepare.sh",
+    "prepare_files": ["targets/flowise/prepare-flowise.mjs"],
+    "prepare_env_file": "target.env",
+    "flowise_test_email": "agentfuzz@example.invalid",
+    "flowise_test_password": "AgentFuzz-test-password-2026!",
     "healthcheck_url": "http://127.0.0.1:3000/api/v1/ping",
     "workspace": ".workspace/flowise-runtime",
     "container_name": "agentfuzz-flowise",

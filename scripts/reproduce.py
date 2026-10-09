@@ -72,6 +72,53 @@ def wait_healthcheck(target: dict) -> None:
     raise RuntimeError(f"target health check did not become ready within {timeout:g}s: {url}")
 
 
+def wait_url(url: str, timeout: float = 60) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                if 200 <= response.status < 400:
+                    return
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(0.5)
+    raise RuntimeError(f"service health check did not become ready within {timeout:g}s: {url}")
+
+
+def model_environment(config: dict) -> dict[str, str]:
+    """Resolve target model fields into explicitly configured environment keys."""
+    target = config.get("target", {})
+    model = target.get("model", config.get("model", {}))
+    resolved = {}
+    for key, field in (target.get("model_environment") or {}).items():
+        if field in model and model[field] is not None:
+            resolved[key] = str(model[field])
+    return resolved
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    values = {}
+    if not path.is_file():
+        return values
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def reset_target_workspace(workspace: Path, image: str) -> None:
+    """Start every run from a clean target workspace and restore host ownership."""
+    workspace.mkdir(parents=True, exist_ok=True)
+    mount = f"{workspace}:/workspace"
+    run(["docker", "run", "--rm", "--platform", "linux/amd64", "-v", mount,
+         image, "bash", "-lc", "find /workspace -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"])
+    uid, gid = str(os.getuid()), str(os.getgid())
+    run(["docker", "run", "--rm", "--platform", "linux/amd64", "-v", mount,
+         image, "bash", "-lc", f"chown -R {uid}:{gid} /workspace"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=ROOT / "config.json")
@@ -120,6 +167,7 @@ def main() -> int:
         if not args.skip_analysis:
             run([str(python_bin), "scripts/analyze_target.py", "--config", str(args.config.resolve())])
         run([str(python_bin), "scripts/build_target_image.py", "--config", str(args.config.resolve())])
+        reset_target_workspace(workspace, image)
 
         if not args.skip_baseline:
             baseline_log = artifact / "baseline.log"
@@ -144,12 +192,28 @@ def main() -> int:
             if not isinstance(port, int) or not 1 <= port <= 65535:
                 raise ValueError("config.target.serve_port must be a valid TCP port")
             docker_run.extend(["-p", f"{port}:{port}"])
+        for service in target.get("mock_services", []) or []:
+            service_port = service.get("port")
+            if service_port:
+                if not isinstance(service_port, int) or not 1 <= service_port <= 65535:
+                    raise ValueError("target.mock_services.port must be a valid TCP port")
+                docker_run.extend(["-p", f"{service_port}:{service_port}"])
         for key, value in (target.get("environment") or {}).items():
             docker_run.extend(["-e", f"{key}={value}"])
-        docker_run.extend([image, "bash", "-lc", str(serve_command)])
+        for key, value in model_environment(config).items():
+            docker_run.extend(["-e", f"{key}={value}"])
+        prepare_name = target.get("prepare_script")
+        if prepare_name:
+            docker_run.extend(["-e", f"AGENTFUZZ_PREPARE_SCRIPT={Path(str(prepare_name)).name}"])
+        docker_run.extend([image, "bash", "/opt/agentfuzz/start-target.sh", str(serve_command)])
         run(docker_run)
         container_started = True
         wait_healthcheck(target)
+        for service in target.get("mock_services", []) or []:
+            if service.get("healthcheck_url"):
+                wait_url(str(service["healthcheck_url"]), float(service.get("healthcheck_timeout", 60)))
+        if prepare_name:
+            run(["docker", "exec", str(container), "bash", "/opt/agentfuzz/prepare-target.sh"])
         payload = agent.get("poc_test_payload")
         poc_spec = agent.get("poc", "")
         module_name, separator, function_name = poc_spec.partition(":")
@@ -162,6 +226,9 @@ def main() -> int:
         )
         poc_env = os.environ.copy()
         poc_env["AGENTFUZZ_TARGET_CONTAINER"] = str(container)
+        env_file = target.get("prepare_env_file")
+        if env_file:
+            poc_env.update(read_env_file(workspace / str(env_file)))
         with poc_log.open("w", encoding="utf-8") as handle:
             completed = subprocess.run(
                 [str(python_bin), "-c", poc_code], cwd=ROOT, env=poc_env,
@@ -172,15 +239,33 @@ def main() -> int:
         fuzz_env = os.environ.copy()
         fuzz_env["AGENTFUZZ_FUZZ_TIMEOUT"] = str(args.duration)
         fuzz_env["AGENTFUZZ_TARGET_CONTAINER"] = str(container)
+        if env_file:
+            fuzz_env.update(read_env_file(workspace / str(env_file)))
         fuzz_log = artifact / "agentfuzz.log"
+        # AgentFuzz itself may return early when its success condition is met.
+        # Keep the target and configured mocks alive and start another complete
+        # AgentFuzz session until the requested wall-clock duration is reached.
+        fuzz_started = time.monotonic()
+        completed = None
+        session = 0
         with fuzz_log.open("w", encoding="utf-8") as handle:
-            print("+ AgentFuzz fuzzing", flush=True)
-            completed = subprocess.run(
-                [str(python_bin), "main.py", "-i", str(args.iterations), "-app", str(app)],
-                cwd=ROOT, env=fuzz_env, stdout=handle, stderr=subprocess.STDOUT,
-                check=False,
-            )
-        result["fuzz_exit_code"] = completed.returncode
+            while time.monotonic() - fuzz_started < args.duration:
+                session += 1
+                handle.write(f"\n===== AgentFuzz session {session} =====\n")
+                handle.flush()
+                print(f"+ AgentFuzz fuzzing session {session}", flush=True)
+                completed = subprocess.run(
+                    [str(python_bin), "main.py", "-i", str(args.iterations), "-app", str(app)],
+                    cwd=ROOT, env=fuzz_env, stdout=handle, stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                result["fuzz_sessions"] = session
+                result["fuzz_last_exit_code"] = completed.returncode
+                if completed.returncode and time.monotonic() - fuzz_started < args.duration:
+                    handle.write(f"AgentFuzz session failed with exit code {completed.returncode}; continuing.\n")
+                    handle.flush()
+        result["fuzz_exit_code"] = 0 if completed is None else completed.returncode
+        result["fuzz_elapsed_seconds"] = round(time.monotonic() - fuzz_started, 3)
     except Exception as exc:
         result["error"] = repr(exc)
         raise
@@ -192,6 +277,17 @@ def main() -> int:
                 shutil.copy2(source, runtime / f"{name}.log")
         if container_started:
             run(["docker", "container", "rm", "--force", str(container)], check=False)
+        # The target image runs as root by default; make mounted artifacts
+        # usable by the invoking user after the container has been removed.
+        try:
+            reset_target_workspace_ownership = [
+                "docker", "run", "--rm", "--platform", "linux/amd64", "-v",
+                f"{workspace}:/workspace", image, "bash", "-lc",
+                f"chown -R {os.getuid()}:{os.getgid()} /workspace",
+            ]
+            run(reset_target_workspace_ownership, check=False)
+        except Exception:
+            pass
         result["finished_at"] = time.time()
         (artifact / "manifest.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
