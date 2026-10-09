@@ -1,5 +1,26 @@
 # AgentFuzz TypeScript 迁移清单
 
+## 测试用例
+
+本次 TypeScript 迁移使用以下真实漏洞条目作为运行测试目标。测试用例用于确认迁移后的 AgentFuzz 能够在真实 TypeScript Agent 项目上完成静态分析、调用链提取、规则生成和运行流程；即使该漏洞最终超出工具的实际检测能力，也不影响迁移验收。
+
+- 漏洞编号：`CVE-2026-41265`
+- Target：`FlowiseAI/Flowise`
+- 仓库链接：<https://github.com/FlowiseAI/Flowise>
+- 漏洞版本范围：`< 3.1.0`
+- 测试版本标签：`flowise@3.0.5`
+- 测试版本提交：`ba6a602cbe87d9f55c9ee6aebb6407ec2f2066b5`
+- CWE：`CWE-77`
+- CVSS：`9.8`（Critical）
+- LLM-in-the-Loop 类型：`LLM-generated artifacts`
+- 漏洞描述：Flowise 的 `Airtable_Agents.run` 让 LLM 根据用户问题生成 Python 代码，并通过 Pyodide 执行。攻击者可通过 prompt injection 诱导 LLM 生成恶意 Python 脚本，从而执行攻击者控制的命令。
+- 关键源码：`packages/components/nodes/agents/AirtableAgent/AirtableAgent.ts`、`packages/components/nodes/agents/AirtableAgent/core.ts`
+- 关键函数：`Airtable_Agents.run`、`LoadPyodide`、`pyodide.runPythonAsync`
+- 预期高层调用链：`Airtable_Agents.run -> LoadPyodide -> pyodide.runPythonAsync`
+- 预期 Sink：Pyodide 的 Python 代码执行接口 `runPythonAsync`
+- 构建前提：Node.js `>=18.15.0 <19.0.0 || ^20`，pnpm `>=9`；按仓库 workspace 配置安装依赖并执行构建。
+- 运行前提：需要 Flowise 可用的数据库、LLM 配置，以及 Airtable Agent 所需的 Airtable 凭证和 Base/Table 配置；通过 chatflow 或 API 向 Airtable Agent 提交问题。
+
 ## 总体迁移约束
 
 本次迁移的目标是实现与原版对等的 TypeScript 版本，而不是重写、重设计或扩展 AgentFuzz。具体约束如下：
