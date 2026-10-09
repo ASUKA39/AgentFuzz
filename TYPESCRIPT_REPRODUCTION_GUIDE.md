@@ -184,6 +184,10 @@ AGENTFUZZ_TARGET_CONTAINER=agentfuzz-flowise \
 直接运行 AgentFuzz：
 
 ```bash
+: > /tmp/hook.log
+: > /tmp/if.log
+: > /tmp/callstack.log
+: > /tmp/oracle.log
 AGENTFUZZ_TARGET_CONTAINER=agentfuzz-flowise \
   AGENTFUZZ_FUZZ_TIMEOUT=900 \
   .workspace/agentfuzz-venv/bin/python main.py \
