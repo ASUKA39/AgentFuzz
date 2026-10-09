@@ -196,6 +196,27 @@ python3 scripts/reproduce.py --config config.json --duration 900 --iterations 10
 
 检查顺序必须是：确认 `manifest.json` 中没有错误并记录了退出码；确认四个规则 JSON 都是合法 JSON；确认 Target 容器日志和基线结果符合 Target 自身的成功条件；确认 `oracle.log`、`hook.log`、`if.log`、`callstack.log` 是本次运行产生的文件；最后再读取 AgentFuzz 输出中的 `exploration successful`。该字段是 AgentFuzz 自身的成功判定，不等价于 Target 漏洞是否存在；是否命中漏洞必须依据对应 Oracle 规则、运行时日志和 Target 结果共同判断。
 
+### 查看成功 Prompt
+
+AgentFuzz 将每次运行最终保留下来的输入打印在 `FINAL PROMPT` 标记之间，并在后面的 `exploration successful` 标记处打印 `True` 或 `False`。`True` 表示该 Prompt 经过 AgentFuzz 的 Oracle 匹配并重新执行验证，可以作为待人工复核的漏洞 PoC 候选；它不表示漏洞已经被人工确认。`False` 或空的 Prompt 表示本次运行没有得到成功的 PoC 候选。
+
+使用一键脚本时，在以下文件中查看这些内容：
+
+```text
+.workspace/fuzz-results/<target_name>/agentfuzz.log
+```
+
+每个 AgentFuzz 会话最多输出一个最终 Prompt。若一键脚本因单次会话提前结束而启动多个会话，`agentfuzz.log` 会按会话顺序包含多个 `FINAL PROMPT`/`exploration successful` 段落；逐段读取，不要只看文件末尾。手工运行 `main.py` 时，同样的内容直接显示在终端。中间尝试过但未成为最终结果的候选 Prompt 不会作为独立 PoC 文件保存。
+
+可以用以下命令定位结果：
+
+```bash
+rg -n -A2 -B1 'FINAL PROMPT|exploration successful' \
+  .workspace/fuzz-results/<target_name>/agentfuzz.log
+```
+
+确认某段为 `True` 后，还必须结合该段对应的 `oracle.log`、调用链日志和 Target 实际行为进行人工复核；不能仅凭 `True` 或 Prompt 文本下漏洞结论。
+
 ## 八、清理
 
 一键脚本会自动删除长期运行的 Target 容器。手工运行时必须执行：
