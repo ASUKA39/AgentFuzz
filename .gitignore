@@ -6,6 +6,7 @@ __pycache__/
 .history/
 .DS_Store
 .workspace/
+node_modules/
 
 # C extensions
 *.so
