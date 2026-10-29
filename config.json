@@ -6,7 +6,7 @@
   "model": {
     "base_url": "https://api.deepseek.com",
     "name": "deepseek-flash",
-    "api_key": "sk-281d0267e93b4955acf0847a0ebd73c0",
+    "api_key": "",
     "temperature": 0,
     "thinking": false,
     "timeout": 120
